@@ -18,6 +18,9 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#define BUFFER_SIZE 80
+#define ARR_SIZE 80
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -28,6 +31,8 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
+	printf("in process_execute()\n");
+
   char *fn_copy;
   tid_t tid;
 
@@ -37,6 +42,12 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+
+	char *sv;
+	file_name = strtok_r((char *)file_name, " ", &sv);
+
+	printf("%s\n", file_name);
+	printf("%s\n", fn_copy);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -50,6 +61,8 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+	printf("I'm in start_process()\n");
+
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
@@ -88,7 +101,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+	while(1) thread_yield();
 }
 
 /* Free the current process's resources. */
@@ -208,6 +221,9 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
+	printf("I'm in load()\n");
+	printf("%s\n", (char *)file_name);
+
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -220,6 +236,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
+
+	char *sv;
+	char* token;
+	token = strtok_r((char *)file_name, " ", &sv);
 
   /* Open executable file. */
   file = filesys_open (file_name);
@@ -310,12 +330,67 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
+	if(success) {
+
+		printf("I'm filling the stack boi\n");
+
+		int argc = 0;
+		char **argv[ARR_SIZE]; //array of pointers
+		int i, align;
+
+		for(; token != NULL; token = strtok_r(NULL, " ", &sv)) {
+
+		//copy commands into dynamically allocated array
+			*esp -= strlen(token) + 1;
+			argv[argc] = *esp;
+			argc++;
+
+			memcpy(*esp, token, strlen(token)+1);
+			printf("argv[%i]: %s\n", argc - 1, token);
+		}
+
+		argv[argc] = 0;	
+
+		//push alignment var
+		align = (int) (*esp) % 4;
+		if(align > 0) {
+			*esp -= align;
+			memcpy(*esp, &argv[argc], align); 
+		}
+		//push address of commands on stack in reverse
+		for(i=argc; i >= 0; i--) {
+			*esp -= sizeof(char *);
+			memcpy(*esp, &argv[i], sizeof(char *));
+		}
+		
+		//push pointer to pointers to command
+		char *temp = *esp;
+		*esp -= sizeof(char **);
+		memcpy(*esp, &temp, 4);
+	
+		printf("%i\n", sizeof(&temp));	
+		printf("%p\n", temp);
+		printf("%p\n", *esp);
+
+		//push argc
+		*esp -= sizeof(int);
+		memcpy(*esp, &argc, sizeof(int));
+
+		//push fake return addr
+		*esp -= sizeof(void *);
+		memcpy(*esp, &argv[argc], sizeof(void *));
+
+		printf("%p\n", (void*)(*esp));
+
+		hex_dump((uintptr_t)*esp, *esp, PHYS_BASE - *esp, true);
+	}
+
  done:
   /* We arrive here whether the load is successful or not. */
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
@@ -429,6 +504,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp) 
 {
+	printf("Setting up the stack boi\n");
+
   uint8_t *kpage;
   bool success = false;
 
